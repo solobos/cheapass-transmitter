@@ -1,0 +1,320 @@
+/////////////////////////////// AUTO CALIBRATED CHEAP ASS TRANSMITTER - very thanks to " iforce2d " (i take main sketch from him and make some developments) ///////////////////////////////
+
+/////////////////    Before opening(powering) arduino make sure that you set your joysticks to center     /////////////////
+/////////////////              Because firstly it calibrates mid points in three seconds!!!!              /////////////////
+/////////////////         After three seconds you have got seven seconds to calibrate min and max         /////////////////
+/////////////////                                values of your joysticks.                                /////////////////
+/////////////////               move your joysticks to min and max(everywhere you can move)               /////////////////
+//////////////////////////////////////                                                 ////////////////////////////////////
+///////////////////////////////////////////////                               /////////////////////////////////////////////
+//////////////////////////////////////////////////                         ////////////////////////////////////////////////
+////////////////////////////////////////////////////////             //////////////////////////////////////////////////////
+
+
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
+#include "printf.h"
+const uint64_t pipeOut = 0xE8E8F0F0E1LL;
+RF24 radio(9, 10);
+
+
+
+
+//////////////////// calibration values ////////////////////////
+int throttleValue = 0;       
+int throttleMid  ;        
+int throttleMin = 1023;        
+int throttleMax = 0; 
+
+int yawValue = 0;       
+int yawMid  ;        
+int yawMin = 1023;        
+int yawMax = 0;
+
+int pitchValue = 0;       
+int pitchMid  ;        
+int pitchMin = 1023;        
+int pitchMax = 0;
+
+int rollValue = 0;       
+int rollMid  ;        
+int rollMin = 1023;        
+int rollMax = 0;
+////////////////////////// smoothing values /////////////////////////////
+int readIndex = 0;              // the index of the current reading
+int total = 0;                   // the running total
+int aveThrottle;                // the average
+
+int readIndex1 = 0;              // the index of the current reading
+int total1 = 0;    
+int aveYaw;
+
+int readIndex2 = 0;              // the index of the current reading
+int total2 = 0;    
+int avePitch; 
+
+int readIndex3 = 0;              // the index of the current reading
+int total3 = 0;    
+int aveRoll; 
+
+///////////////////    i have got very bad condition potentiometers on joysticks. their values are not stable  however   ///////////////////
+///////////////////                    i dont move them.  So i have to need smooth these values                          /////////////////// 
+///////////////////     this values "numReadings"  are for interpolation for your potentiometer values for smoothing     ///////////////////
+///////////////////               if it is higher means very smoothy values  else goes to unstable position              ///////////////////
+const int numReadings = 9;  //6 //15 //20
+const int numReadings1 = 9;
+const int numReadings2 = 9;
+const int numReadings3 = 9;
+int readings[numReadings];      // the readings from the analog input
+int readings1[numReadings1];
+int readings2[numReadings2];
+int readings3[numReadings3];
+//////////////////////nrf24l01///////////////////////
+struct MyData {
+ 
+  byte throttle;
+  byte yaw;
+  byte pitch;
+  byte roll;
+  byte switches; // bitflag
+};
+
+MyData data;
+
+
+/////////////////////// mapping smooth potentiometer values to 0-255 /////////////////////////
+int mapJoystickValues(int val, int lower, int middle, int upper, bool reverse)
+{
+  val = constrain(val, lower, upper);
+  if ( val < middle )
+   val = map(val, lower, middle, 0, 128);
+  else
+   val = map(val, middle, upper, 128, 255);
+ return ( reverse ? 255 - val : val );
+}
+
+
+void setup() {
+ Serial.begin(115200);
+ 
+ Serial.println("  calibration starting  ");
+ Serial.println("  set joysticks to mid you have three seconds !!!!! ");
+ while (millis()<3000) {
+  average();
+  mid();
+ }
+ 
+ if (millis()==3000) {
+   Serial.println("mid calibration done!!! now calibrating min and max !!!   you have seven seconds !!!!");
+   Serial.println("move your joysticks to max and min values   (move your throttle,yaw,pitch,roll)  !!!!");
+   
+ }
+ while (millis()==3000 || millis()<10000) {
+  average();
+  calibrate();
+ }
+
+ if (millis()==11000) {
+   
+Serial.println(" calibration done!!! ");
+}
+  printf_begin();
+  radio.begin();
+  radio.setAutoAck(false);
+  radio.setDataRate(RF24_250KBPS);
+  radio.printDetails();
+  radio.openWritingPipe(pipeOut);
+
+
+}
+
+
+/////////////////////////// void of making average values for potentiometers  ////////////////////////////////
+void average() {
+   // subtract the last reading:
+  total = total - readings[readIndex];
+  // read from the sensor:
+  readings[readIndex] = analogRead(A0);
+  // add the reading to the total:
+  total = total + readings[readIndex];
+  // advance to the next position in the array:
+  readIndex = readIndex + 1;
+
+  // if we're at the end of the array...
+  if (readIndex >= numReadings) {
+    // ...wrap around to the beginning:
+    readIndex = 0;
+  }
+  // calculate the average:
+  aveThrottle = total / numReadings;
+/////////////////////////////////////////////////////////////////////////////////////
+   // subtract the last reading:
+  total1 = total1 - readings1[readIndex1];
+  // read from the sensor:
+  readings1[readIndex1] = analogRead(A1);
+  // add the reading to the total:
+  total1 = total1 + readings1[readIndex1];
+  // advance to the next position in the array:
+  readIndex1 = readIndex1 + 1;
+
+  // if we're at the end of the array...
+  if (readIndex1 >= numReadings1) {
+    // ...wrap around to the beginning:
+    readIndex1 = 0;
+  }
+  // calculate the average:
+  aveYaw = total1 / numReadings1;
+
+  ///////////////////////////////////////////////////////////////////////////////
+   // subtract the last reading:
+  total2 = total2 - readings2[readIndex2];
+  // read from the sensor:
+  readings2[readIndex2] = analogRead(A3);
+  // add the reading to the total:
+  total2 = total2 + readings2[readIndex2];
+  // advance to the next position in the array:
+  readIndex2 = readIndex2 + 1;
+
+  // if we're at the end of the array...
+  if (readIndex2 >= numReadings2) {
+    // ...wrap around to the beginning:
+    readIndex2 = 0;
+  }
+  // calculate the average:
+  avePitch = total2 / numReadings2;
+//////////////////////////////////////
+   // subtract the last reading:
+  total3 = total3 - readings3[readIndex3];
+  // read from the sensor:
+  readings3[readIndex3] = analogRead(A2);
+  // add the reading to the total:
+  total3 = total3 + readings3[readIndex3];
+  // advance to the next position in the array:
+  readIndex3 = readIndex3 + 1;
+
+  // if we're at the end of the array...
+  if (readIndex3 >= numReadings3) {
+    // ...wrap around to the beginning:
+    readIndex3 = 0;
+  }
+  // calculate the average:
+  aveRoll = total3 / numReadings3;
+  
+ }
+ 
+ 
+ /////////////////////////// void of calibrating min and max values  ////////////////////////////////
+void calibrate() {
+  throttleValue = aveThrottle;
+  if (throttleValue > throttleMax) {
+    throttleMax = throttleValue;
+  }
+  if (throttleValue < throttleMin) {
+    throttleMin = throttleValue;
+  }
+  
+  yawValue = aveYaw;
+  if (yawValue > yawMax) {
+    yawMax = yawValue;
+  }
+  if (yawValue < yawMin) {
+    yawMin = yawValue;
+  }
+  
+   pitchValue = avePitch;
+  if (pitchValue > pitchMax) {
+    pitchMax = pitchValue;
+  }
+  if (pitchValue < pitchMin) {
+    pitchMin = pitchValue;
+  }
+  
+     rollValue = aveRoll;
+  if (rollValue > rollMax) {
+    rollMax = rollValue;
+  }
+  if (rollValue < rollMin) {
+    rollMin = rollValue;
+  }
+  
+  
+}
+/////////////////////////// void of calibrating mid values  ////////////////////////////////
+void mid() {
+ throttleMid = aveThrottle;
+ yawMid = aveYaw;
+ pitchMid = avePitch;
+ rollMid = aveRoll;
+ }
+
+void loop() {
+///////////////////////////              run average void for smooth values              ////////////////////////////////
+/////////////////////////// if your values are stable you dont need to run average void  ////////////////////////////////
+/////////////////////////// if you dont run make sure change average values to analogRead() values ////////////////////////////////
+average();
+
+data.throttle =  mapJoystickValues(aveThrottle,throttleMin,throttleMid,throttleMax, true);
+data.yaw =  mapJoystickValues(aveYaw,yawMin,yawMid,yawMax, true);
+data.pitch =  mapJoystickValues(avePitch,pitchMin,pitchMid,pitchMax, true);
+data.roll =  mapJoystickValues(aveRoll,rollMin,rollMid,rollMax, true);
+
+data.switches = 0;
+  if ( ! digitalRead(4) ) data.switches |= 0x1;
+  if ( ! digitalRead(2) ) data.switches |= 0x2;
+  
+  radio.write(&data, sizeof(MyData));
+
+
+
+
+
+  //Serial.print("throttle value=");
+  //Serial.print(aveThrottle);
+ // Serial.print(" throttle MiN=");
+ // Serial.print(  throttleMin  );
+ // Serial.print(" throttle Mid=");
+ // Serial.print(  throttleMid  );
+ // Serial.print(" throttle Max=");
+ // Serial.print(throttleMax);
+ // Serial.print("   data = ");
+ // Serial.print(data.throttle);
+  
+ // Serial.print("  yaw value=");
+  //Serial.print(aveYaw);
+ // Serial.print(" yaw MiN=");
+  //Serial.print(  yawMin  );
+ // Serial.print(" yaw Mid=");
+ // Serial.print(  yawMid  ); 
+  //Serial.print(" yaw Max=");
+  //Serial.print(yawMax);
+  //Serial.print(" datayaw=");
+  //Serial.print(data.yaw);
+  
+ Serial.print(" pitch value=");
+ Serial.print(avePitch);
+ Serial.print(" pitch MiN=");
+  Serial.print(  pitchMin  );
+  Serial.print(" pitch Mid=");
+  Serial.print(  pitchMid  ); 
+  Serial.print(" pitch Max=");
+  Serial.print(pitchMax);
+  Serial.print(" datapitch =");
+  Serial.print(data.pitch);
+  
+ Serial.print(" roll value=");
+  Serial.print(aveRoll);
+  Serial.print(" rollMiN=");
+  Serial.print(  rollMin  );
+  Serial.print(" rollMid=");
+  Serial.print(  rollMid  ); 
+  Serial.print(" roll Max=");
+  Serial.print(rollMax);
+  Serial.print(" dataroll=");
+  Serial.println(data.roll);
+  
+ // Serial.print("   swith:1 ");
+  //Serial.print(data.switches & 0x1);
+ // Serial.print("   swith:2 ");
+  //Serial.println(data.switches & 0x2);
+}
